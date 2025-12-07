@@ -438,3 +438,474 @@ sample_xts_window <- function(prices_xts, sample_size = 3, min_window_length = 2
     end_dates = end_dates
   )
 }
+
+
+# 02 TRADING STRATEGY FUNCTIONS -------------------------------------------
+
+#' strat_buy_hold
+#' 
+#' @description
+#' Simple strategy of buying on the first day of trading, and holding it forever
+#' 
+#' @param prices_xts xts dataframe containing trading data, in particular
+#' dates and Close prices
+#'
+#' @returns tibble dataframe with dates, original Close prices, and trade
+#' signals (buy, sell and hold)
+
+strat_buy_hold <- function(prices_xts) {
+  
+  n <- nrow(prices_xts)
+  
+  tibble(
+    date = index(prices_xts),
+    price = as.numeric(Cl(prices_xts)),
+    trade_signal = c(1L, rep(0L, n - 1))
+  )
+  
+}
+
+
+#' strat_sma
+#' 
+#' @description Simple moving average, a trend-following strategy i.e. detects 
+#' trend direction changes, works best in trending markets and underperforms in 
+#' sideways/choppy/whipsaw markets.
+#' Buy signals are triggered when prices move above moving average, and 
+#' sell signals are triggered when prices move below moving average.
+#'
+#' @param prices_xts xts dataframe containing trading data, in particular
+#' dates and Close prices
+#' @param period_n SMA period to pass onto TTR::SMA, defaults to 250 periods
+#'
+#' @returns tibble dataframe with dates, original Close prices, SMA, and trade
+#' signals (buy, sell and hold)
+
+strat_sma <- function(prices_xts, period_n = 250) {
+  
+  if (nrow(prices_xts) < period_n) {
+    stop("Insufficient data: need at least ", period_n, " periods")
+  }
+  
+  tibble(
+    date = index(prices_xts)
+  ) %>% 
+    mutate(
+      price = as.numeric(Cl(prices_xts))
+      ,sma = as.numeric(SMA(price, n = period_n))
+      ,diff_now = price - sma
+      ,diff_prev = dplyr::lag(diff_now)
+      ,trade_signal = case_when(
+        !is.na(diff_prev) & (diff_prev <= 0) & (diff_now > 0) ~  1L  # up-cross; buy
+        ,!is.na(diff_prev) & (diff_prev >= 0) & (diff_now < 0) ~ -1L  # down-cross; sell
+        ,.default = 0L # hold
+      )
+    ) %>% 
+    select(
+      -diff_now
+      ,-diff_prev
+    )
+  
+}
+
+
+#' strat_sma_cross
+#' 
+#' @description
+#' Trend-following strategy i.e. detects trend direction changes, works best in
+#' trending markets and underperforms in sideways/choppy/whipsaw markets.
+#' This strategy uses 2x SMA, one short term and one long term. 
+#' Buy signals are triggered when short SMA moves above long SMA, and 
+#' sell signals are triggered when short SMA moves below long SMA.
+#' 
+#' @param prices_xts xts dataframe containing trading data, in particular
+#' dates and Close prices
+#' @param short_n Short SMA period to pass onto TTR::SMA, defaults to 20 periods
+#' @param long_n Long SMA period to pass onto TTR::SMA, defaults to 50 periods
+#'
+#' @returns tibble dataframe with dates, original Close prices, short SMA, 
+#' long SMA, and trade signals (buy, sell and hold)
+
+strat_sma_cross <- function(prices_xts, short_n = 20, long_n = 50) {
+  
+  tibble(
+    date = index(prices_xts)
+  ) %>% 
+    mutate(
+      price = as.numeric(Cl(prices_xts))
+      ,sma_short = as.numeric(SMA(price, n = short_n))
+      ,sma_long = as.numeric(SMA(price, n = long_n))
+      ,diff_now = sma_short - sma_long
+      ,diff_prev = dplyr::lag(diff_now)
+      ,trade_signal = case_when(
+        !is.na(diff_prev) & (diff_prev <= 0) & (diff_now > 0) ~  1L # buy
+        ,!is.na(diff_prev) & (diff_prev >= 0) & (diff_now < 0) ~ -1L # sell 
+        ,.default = 0L # hold
+      )
+    ) %>% 
+    select(
+      -diff_now
+      ,-diff_prev
+    )
+  
+}
+
+
+#' strat_rsi
+#' 
+#' @description
+#' Calculates Relative Strength Index - ratio of the recent upward price movements 
+#' to the absolute price movement and the result ranges between 0 and 100. It 
+#' measures momentum i.e. how strong recent gains are relative to recent losses.
+#' When RSI < 30, this could indicate market is oversold and price may rise
+#' When RSI > 70, this could indicate market is overbought and price may drop
+#'
+#' @param prices_xts xts dataframe containing trading data, in particular
+#' dates and Close prices
+#' @param n_period Number of RSI period to pass onto TTR::RSI, defaults to 14
+#' periods
+#' @param lower Lower RSI band - defaults to 30
+#' @param upper Upper RSI band - defaults to 70
+#'
+#' @returns tibble dataframe with dates, original Close prices, RSI index, 
+#' trade signals (buy, sell and hold)
+
+strat_rsi <- function(prices_xts, n_period = 14, lower = 30, upper = 70) {
+  
+  tibble(
+    date = index(prices_xts)
+  ) %>% 
+    mutate(
+      price = as.numeric(Cl(prices_xts))
+      ,rsi = as.numeric(RSI(price, n = n_period))
+      ,prev_rsi = dplyr::lag(rsi)
+      ,trade_signal = case_when(
+        !is.na(prev_rsi) & (prev_rsi <= lower) & (rsi > lower) ~  1L # buy
+        ,!is.na(prev_rsi) & (prev_rsi >= upper) & (rsi < upper) ~ -1L # sell
+        ,.default = 0L # hold
+      )
+    ) %>% 
+    select(-prev_rsi)
+  
+}
+
+
+#' strat_bb
+#' 
+#' @description
+#' Bollinger Bands track volatility instead of momentum or trend i.e. how much
+#' does price disperses around the 20-day (i.e. the default) moving average. 
+#' When returns are normally distributed (which isn't the case for crypto - 
+#' right skewed), prices will rarely exceed the upper band or drop below the 
+#' lower band. When price exceeds upper band, this suggests overbought so sell.
+#' When price drops below lower band, this suggests oversell so buy. For crypto
+#' Bollinger Bands aren't expected to provide good signals since the returns 
+#' are not normally distributed.
+#'
+#' @param prices_xts xts dataframe containing trading data, in particular
+#' dates and High, Low, and Close prices
+#' @param n number of moving average periods to pass onto TTR::BBands, defaults to 20
+#' @param sd standard deviation to to pass onto TTR::BBands, defaults to 2
+#'
+#' @returns tibble dataframe with dates, original Close prices, upper band, 
+#' middle band and lower band, trade signals (buy, sell and hold)
+
+strat_bb <- function(prices_xts, n = 20, sd = 2) {
+  
+  hlc_xts <- HLC(prices_xts)
+  
+  bb <- BBands(
+    HLC = hlc_xts
+    ,n = n
+    ,sd = sd
+    ,maType = "SMA"
+  )
+  
+  tibble(
+    date = index(prices_xts)
+  ) %>% 
+    mutate(
+      price = as.numeric(Cl(prices_xts))
+      ,bb_up = as.numeric(bb$up)
+      ,bb_down = as.numeric(bb$dn)
+      ,bb_mavg = as.numeric(bb$mavg)
+      ,trade_signal = case_when(   
+        price < bb_down ~ 1L # Buy (price below lower band)
+        ,price > bb_up ~  -1L # Sell (price above upper band)  
+        ,.default = 0L # Hold
+      )
+    )
+  
+}
+
+
+#' strat_macd
+#' 
+#' @description
+#' MACD stands for Moving Average Convergence Divergence, it is a momentum 
+#' tracking indicator There are 3 components:
+#' 
+#' - MACD Line is based on the difference between two EMAs (Exponential
+#' Moving Averages) i.e. a fast EMA (12 period) and a slow EMA (26 period), and
+#' represents difference in momentum between short term and long term.
+#' 
+#' - Signal line which is EMA based on the MACD line above
+#' 
+#' - MACD Histogram which is difference between MACD line and signal line. 
+#' Positive histogram represents increasing momentum and
+#' Negative histogram represents decreasing momentum
+#' 
+#' Trade signals are generated when histogram crosses zero i.e. 
+#' buy signals when histogram crosses 0 from negative to positive and 
+#' sell signals when histogram crosses 0 from positive to negative.
+#' 
+#' Since MACD uses EMAs, it responds quicker to recent price changes than SMA 
+#' based indicators. Excellent in trending markets but poor in sideways/whipsaw 
+#' markets. Downside of MACD is that it might sometimes react strongly during
+#' high volatility periods, producing false breakouts and whipsaws.
+#'
+#' @param prices_xts xts dataframe containing trading data, in particular
+#' dates and Close prices
+#' @param n_fast number of periods for fast MA to pass onto TTR::MACD, defaults to 12 periods
+#' @param n_slow number of periods for slow MA to pass onto TTR::MACD, defaults to 26 periods
+#' @param n_signal number of periods for signal MA to pass onto TTR::MACD, defaults to 9 periods
+#'
+#' @returns tibble dataframe with dates, original Close prices, MACD line, 
+#' MACD signal line, MACD histogram and trade signals (buy, sell and hold)
+
+strat_macd <- function(prices_xts, n_fast = 12, n_slow = 26, n_signal = 9) {
+  
+  close_xts <- Cl(prices_xts)
+  
+  macd_obj <- MACD(
+    x = close_xts
+    ,nFast = n_fast
+    ,nSlow = n_slow
+    ,nSig = n_signal
+    ,maType = EMA
+    ,percent = FALSE
+  )
+  
+  tibble(
+    date = index(prices_xts)
+  ) %>% 
+    mutate(
+      price = as.numeric(close_xts)
+      ,macd_line = as.numeric(macd_obj[, "macd"])
+      ,signal_line = as.numeric(macd_obj[, "signal"])
+      ,hist = macd_line - signal_line
+      ,prev_hist = dplyr::lag(hist)
+      ,trade_signal = case_when(
+        (!is.na(prev_hist)) & (prev_hist <= 0) & (hist > 0) ~  1L # Buy
+        ,(!is.na(prev_hist)) & (prev_hist >= 0) & (hist < 0) ~ -1L # Sell
+        ,.default = 0L # Hold
+      )
+    ) %>% 
+    select(-prev_hist)
+  
+}
+
+
+#' strat_macdv
+#' 
+#' @description
+#' MACD-V is a MACD variant that tries to address the weakness of MACD above,
+#' which is that MACD is highly sensitive to high-volatile periods. The V in 
+#' MACD-V stands for volatility. MACD-V is authored by Alex Spiroglou. Read his 
+#' paper here: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4099617
+#' 
+#' He remedies shortcomings by normalising the MACD line, which is done by 
+#' dividing the MACD line with with ATR (Average True Range), which measures 
+#' price volatility. By normalising, MACD
+#' is transformed from a raw momentum indicator to relative momentum indicator. 
+#' 
+#' 
+#' By using the default threshold of 50, MACD histogram can now be divided into
+#' 4 zones:
+#' - hist > +150 → overbought → HOLD
+#' - hist < -150 → oversold → HOLD
+#' - Between ±50 → HOLD (no trade)
+#' - +50 < hist < +150 → weak SELL zone (signal)
+#' - -150 < hist < -50 → weak BUY zone (signal)
+#'
+#' @param prices_xts xts dataframe containing trading data, in particular
+#' dates and High, Low and Close prices
+#' @param n_fast number of periods for fast MA to pass onto TTR::MACD, defaults to 12 periods
+#' @param n_slow number of periods for slow MA to pass onto TTR::MACD, defaults to 26 periods
+#' @param n_signal number of periods for signal MA to pass onto TTR::MACD, defaults to 9 periods
+#' @param atr_period number of periods for ATR to pass onto TTR::ATR, defaults to 26 periods
+#' @param strength_threshold Spiroglou's default strength threshold is 50
+#'
+#' @returns tibble dataframe with dates, original Close prices, MACD line, 
+#' MACD signal line, MACD histogram and trade signals (buy, sell and hold)
+
+strat_macdv <- function(
+    prices_xts
+    ,n_fast = 12
+    ,n_slow = 26
+    ,n_signal = 9
+    ,atr_period = 26
+    ,strength_threshold = 50 # Spiroglou's version is fixed at 50
+) {
+  
+  close_xts <- Cl(prices_xts)
+  
+  macd_obj <- MACD(
+    x = close_xts
+    ,nFast = n_fast
+    ,nSlow = n_slow
+    ,nSig = n_signal
+    ,maType = EMA
+    ,percent = FALSE
+  )
+  
+  macd_line   <- as.numeric(macd_obj[, "macd"])
+  
+  atr_xts <- ATR(HLC(prices_xts), n = atr_period) # Compute ATR for volatility normalization
+  atr_vec <- as.numeric(atr_xts[, "atr"])
+  
+  safe_atr <- pmax(atr_vec, 1e-8) # Avoid divide-by-zero errors
+  
+  macdv_line <- (macd_line / safe_atr) * 100 # Compute MACD-V line (ATR-normalised MACD)
+  
+  macdv_signal <- EMA(macdv_line, n = n_signal) # Compute MACD-V signal and histogram 
+  
+  tibble(
+    date = index(prices_xts)
+  ) %>% 
+    mutate(
+      price = as.numeric(close_xts)
+      ,macdv_line = as.numeric(macdv_line)
+      ,macdv_signal = as.numeric(macdv_signal)
+      ,hist = macdv_line - macdv_signal
+      ,trade_signal = case_when(
+        (hist <= -strength_threshold) & (hist > (-3 * strength_threshold)) ~  1L # BUY zone: histogram between -150 and -50
+        ,(hist >=  strength_threshold) & (hist < ( 3 * strength_threshold)) ~ -1L # SELL zone: histogram between +50 and +150
+        ,(abs(hist) <=     strength_threshold) ~ 0L # Everything between -50 and +50 → HOLD (0)
+        ,(abs(hist) >= 3 * strength_threshold) ~ 0L # Everything < -150 and > +150   → HOLD (0)
+        ,.default = 0L # HOLD
+      )
+    )
+}
+
+
+
+#' strat_macdv_dynamic_strength
+#' 
+#' @description
+#' This strategy tries to further improve on Spiroglou's version above. While
+#' Spiroglou focusses on a fixed strength threshold, this indicator tries to 
+#' improve by making the threshold dynamic/adaptive.
+#' 
+#' It starts with generating trade signals identical to Spiroglou's version,
+#' then those signals are filtered by adaptive strength (using a rolling
+#' quantile of histogram values - rolling window of 20 periods and 80% quantile).
+#' If histogram values fall within this 80% quantile, trade signals are set to
+#' hold, and if histogram values exceed 80% quantile the trade signals (buy/sell)
+#' are kept as is.
+#' 
+#' # Smaller roll_window (e.g. 10)
+#' 
+#'  - Threshold adapts very quickly to recent changes in histogram amplitude.
+#' 
+#'  - More responsive to sudden volatility spikes.
+#' 
+#'  - Can lead to overfitting or noisy thresholds (frequent threshold jumps).
+#' 
+#' # Larger roll_window (e.g. 50)
+#' 
+#'  - Threshold changes more slowly, averaging out short-term noise.
+#' 
+#'  - Produces smoother, more stable no-trade zones.
+#' 
+#'  - Might lag behind recent market volatility shifts.
+#'  
+#'  So roll_window = 20 is a middle ground:
+#'  a balance between being reactive to new volatility conditions and keeping 
+#'  stability.
+#' 
+#' So while Spiroglou's version limits trading to absolute, fixed zones this 
+#' version allows trading to occur when price movements are in top 20% (if 
+#' quantile = 80%) of recent momentum.
+#'
+#' @param prices_xts xts dataframe containing trading data, in particular
+#' dates and High, Low and Close prices
+#' @param n_fast number of periods for fast MA to pass onto TTR::MACD, defaults to 12 periods
+#' @param n_slow number of periods for slow MA to pass onto TTR::MACD, defaults to 26 periods
+#' @param n_signal number of periods for signal MA to pass onto TTR::MACD, defaults to 9 periods
+#' @param atr_period number of periods for ATR to pass onto TTR::ATR, defaults to 26 periods
+#' @param roll_window # rolling window for adaptive threshold, defaults to 20 periods
+#' @param strength_quantile # percentile for adaptive threshold, defautlts to 80%
+#'
+#' @returns tibble dataframe with dates, original Close prices, MACD line, 
+#' MACD signal line, MACD histogram, dynamic threshold and trade signals 
+#' (buy, sell and hold)
+
+strat_macdv_dynamic_strength <- function(
+    prices_xts
+    ,n_fast = 12
+    ,n_slow = 26
+    ,n_signal = 9
+    ,atr_period = 26
+    ,roll_window = 20         
+    ,strength_quantile = 0.8   
+) {
+  
+  close_xts <- Cl(prices_xts)
+  
+  macd_obj <- MACD(
+    x = close_xts
+    ,nFast = n_fast
+    ,nSlow = n_slow
+    ,nSig = n_signal
+    ,maType = EMA
+    ,percent = FALSE
+  )
+  
+  macd_line   <- as.numeric(macd_obj[, "macd"])
+  
+  atr_xts <- ATR(HLC(prices_xts), n = atr_period) # Compute ATR for volatility normalization
+  atr_vec <- as.numeric(atr_xts[, "atr"])
+  
+  safe_atr <- pmax(atr_vec, 1e-8) # Avoid divide-by-zero errors
+  
+  macdv_line <- (macd_line / safe_atr) * 100 # Compute MACD-V line (ATR-normalised MACD)
+  
+  macdv_signal <- EMA(macdv_line, n = n_signal) # Compute MACD-V signal and histogram 
+  
+  tibble(
+    date = index(prices_xts)
+  ) %>% 
+    mutate(
+      price = as.numeric(close_xts)
+      ,macdv = as.numeric(macdv_line)
+      ,macdv_signal = as.numeric(macdv_signal)
+      ,hist = macdv_line - macdv_signal
+      ,prev_hist = dplyr::lag(hist)
+      ,trade_signal_original = case_when( # Raw signals based on histogram crossovers
+        (!is.na(prev_hist)) & (prev_hist <= 0) & (hist > 0) ~  1L # Buy
+        ,(!is.na(prev_hist)) & (prev_hist >= 0) & (hist < 0) ~ -1L # Sell
+        ,.default = 0L # Hold
+      ) 
+      ,abs_hist = abs(hist)
+      ,roll_threshold = as.numeric(
+        rollapply(
+          data = abs_hist
+          ,width = roll_window
+          ,FUN = function(x) quantile(x, probs = strength_quantile, na.rm = TRUE)
+          ,fill = NA
+          ,align = "right"
+        )
+      )
+      ,trade_signal = ifelse(
+        test = abs_hist >= roll_threshold
+        ,yes = trade_signal_original
+        ,no =  0L
+      )
+    ) %>% 
+    select(
+      -prev_hist
+      ,-abs_hist
+    )
+  
+}
