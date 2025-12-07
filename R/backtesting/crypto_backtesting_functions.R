@@ -386,3 +386,55 @@ get_performance_metrics <- function(results, initial_equity = 10000) {
   ,.options = furrr_options(globals = c("initial_equity")) # only copy this variable to worker function
   )
 }
+
+
+#' sample_xts_window
+#' 
+#' @description
+#' Randomly samples multiple time windows from an xts object for Monte Carlo
+#' simulation. Each window has a randomly chosen length between min_window_length
+#' and the full dataset length, starting at a random valid index.
+#'
+#' @param prices_xts xts dataframe containing price data
+#' @param sample_size Number of random windows to generate (default 3)
+#' @param min_window_length Minimum number of periods in each window (default 250)
+#'
+#' @returns List with:
+#'   - sampled_windows: list of xts subsets
+#'   - window_lengths: integer vector of window sizes
+#'   - start_dates: Date vector of window start dates
+#'   - end_dates: Date vector of window end dates
+
+sample_xts_window <- function(prices_xts, sample_size = 3, min_window_length = 250) {
+  
+  n <- NROW(prices_xts)
+  
+  # Validation
+  stopifnot(min_window_length < n)
+  
+  # Randomly sample multiple window lengths
+  win_lengths <- sample(min_window_length:(n - 1), size = sample_size, replace = TRUE)
+  
+  # For each window length, sample a random valid start index
+  start_indices <- map_int(win_lengths, ~ sample(1:(n - .x + 1), 1))
+  end_indices   <- start_indices + win_lengths - 1
+  
+  # Extract each window of data
+  sampled_windows <- map2(start_indices, end_indices, ~ prices_xts[.x:.y]) %>% 
+    set_names(nm = paste0("window_", seq_along(win_lengths)))
+  
+  # Extract metadata for tracking
+  start_dates <- unname(map_chr(sampled_windows, ~ as.character(as.Date(index(.x)[1]))))
+  end_dates   <- unname(map_chr(sampled_windows, ~ as.character(as.Date(index(.x)[nrow(.x)]))))
+  
+  message("Generated ", sample_size, " time windows")
+  message("Window length range: ", min(win_lengths), " to ",
+          max(win_lengths), " days")
+  
+  list(
+    sampled_windows = sampled_windows,
+    window_lengths = win_lengths,
+    start_dates = start_dates,
+    end_dates = end_dates
+  )
+}
