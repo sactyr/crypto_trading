@@ -239,3 +239,150 @@ backtest_strategy <- function(
     ,final_equity = tail(equity_curve, 1)
   )
 }
+
+
+#' get_performance_metrics
+#'
+#' @description
+#' Calculates comprehensive performance statistics across multiple backtest results.
+#' Computes trade-level metrics (number of trades, win rate, profitability) and 
+#' portfolio-level metrics (CAGR, max drawdown, Sharpe, Sortino, Calmar ratios).
+#' Uses parallel processing via furrr for efficient computation across many strategies.
+#' Only counts complete round-trip trades (BUY → SELL pairs) for win rate calculations
+#' to avoid biased statistics from incomplete positions.
+#'
+#' @param results Named list of backtest results from backtest_strategy(), where 
+#' each element contains trades, equity_curve, final_equity, and parameters
+#' @param initial_equity initial cash outlay for trading
+#'
+#' @returns Tibble with performance metrics per strategy: returns, trade stats, 
+#' CAGR, drawdown, Sharpe/Sortino/Calmar ratios
+
+get_performance_metrics <- function(results, initial_equity = 10000) {
+  
+  # Using furrr::future_map_dfr for parallel execution across backtest results
+  furrr::future_map_dfr(names(results), function(name) {
+    
+    message("Running: ", name)
+    
+    res <- results[[name]]
+    strategy_type <- res$strategy_nm
+    
+    # 1. Extract and Calculate Basic Metrics
+    # stop_loss is nested under 'parameters' in the optimised output
+    stop_loss <- res$parameters$stop_loss
+    trades <- res$trades
+    equity_curve <- res$equity_curve
+    final_equity <- res$final_equity
+    total_return <- (final_equity - initial_equity) / initial_equity
+    
+    # number of trades (rows in trades table)
+    num_trades <- nrow(trades)
+    
+    # 2. Profitable Pairs Calculation (Pair BUY then SELL/STOP_LOSS)
+    # The calculation uses units_traded (from the BUY leg) and the prices/fees.
+    
+    pct_profitable <- NA_real_
+    num_complete_trades <- 0L
+    num_profitable_trades <- 0L
+    
+    if (num_trades >= 2) {
+      
+      # Step 1: Group trades into round-trip pairs
+      trade_pairs <- trades %>%
+        # Identify the start of a new trade (BUY action)
+        dplyr::mutate(pair_id = cumsum(action == "BUY")) %>%
+        # Group by the trade ID
+        dplyr::group_by(pair_id) %>%
+        # Mark if this is a complete pair
+        dplyr::mutate(is_complete = dplyr::n() == 2) %>%
+        # Filter for completed trades (must have 2 legs: BUY and SELL)
+        dplyr::filter(is_complete) %>%
+        dplyr::summarise(
+          # Critical: get the units from the BUY trade
+          units_traded = dplyr::first(units)
+          ,buy_price = dplyr::first(price)
+          ,sell_price = dplyr::last(price)
+          ,buy_fee = dplyr::first(fee)
+          ,sell_fee = dplyr::last(fee)
+          ,exit_reason = dplyr::last(exit_reason)
+          ,.groups = "drop"
+        ) %>%
+        # Step 2: Calculate Profit/Loss
+        dplyr::mutate(
+          # P&L = (Sell Price - Buy Price) * Units - Total Fees
+          profit_loss = (sell_price - buy_price) * units_traded - (buy_fee + sell_fee)
+          ,profitable = profit_loss > 0
+        )
+      
+      if (nrow(trade_pairs) > 0) {
+        num_complete_trades <- nrow(trade_pairs)
+        num_profitable_trades <- sum(trade_pairs$profitable, na.rm = TRUE)
+        pct_profitable <- num_profitable_trades / num_complete_trades
+      }
+    }
+    
+    # 3. PerformanceAnalytics Metrics (CAGR, DD, Sharpe, etc.)
+    # Build xts equity series for PerformanceAnalytics
+    eq_xts <- xts::xts(equity_curve$equity, order.by = as.Date(equity_curve$date))
+    # daily returns (arithmetic)
+    daily_rets <- na.omit(PerformanceAnalytics::Return.calculate(eq_xts, method = "discrete"))
+    
+    # CAGR, max drawdown, sharpe, sortino, calmar
+    if (NROW(daily_rets) >= 2) {
+      years <- as.numeric(difftime(max(zoo::index(eq_xts)), min(zoo::index(eq_xts)), units = "days")) / 365.25
+      
+      # Ensure CAGR is only calculated if duration > 0
+      CAGR <- ifelse(
+        years > 0
+        ,(as.numeric(final_equity) / initial_equity)^(1/years) - 1
+        ,NA_real_
+      )
+      max_dd <- as.numeric(PerformanceAnalytics::maxDrawdown(daily_rets))
+      
+      # Use tryCatch for robust statistic calculation
+      sharpe <- tryCatch(
+        as.numeric(PerformanceAnalytics::SharpeRatio.annualized(daily_rets, Rf = 0, scale = 252))
+        ,error = function(e) NA_real_
+      )
+      sortino <- tryCatch(
+        as.numeric(PerformanceAnalytics::SortinoRatio(daily_rets, MAR = 0))
+        ,error = function(e) NA_real_
+      )
+      calmar <- ifelse(
+        !is.na(max_dd) && max_dd > 0
+        ,CAGR / max_dd
+        ,NA_real_
+      )
+    } else {
+      CAGR <- NA_real_
+      max_dd <- NA_real_
+      sharpe <- NA_real_
+      sortino <- NA_real_
+      calmar <- NA_real_
+    }
+    
+    # 4. Final Tibble Output
+    tibble::tibble(
+      strategy = name
+      ,strategy_type = strategy_type
+      ,stop_loss = stop_loss
+      ,final_equity = round(as.numeric(final_equity), 2)
+      ,total_return = round(total_return, 4)
+      ,num_trades = num_trades
+      ,num_complete_trades = num_complete_trades
+      ,num_profitable_trades = num_profitable_trades
+      ,pct_profitable = ifelse(is.na(pct_profitable), NA_real_, round(pct_profitable, 4))
+      ,CAGR = ifelse(is.na(CAGR), NA_real_, round(CAGR, 4))
+      ,max_drawdown = ifelse(is.na(max_dd), NA_real_, round(max_dd, 4))
+      ,sharpe_ratio = ifelse(is.na(sharpe), NA_real_, round(sharpe, 4))
+      ,sortino_ratio = ifelse(is.na(sortino), NA_real_, round(sortino, 4))
+      ,calmar_ratio = ifelse(is.na(calmar), NA_real_, round(calmar, 4))
+    )
+  }
+  
+  # Arguments for future_map_dfr
+  ,.progress = TRUE
+  ,.options = furrr_options(globals = c("initial_equity")) # only copy this variable to worker function
+  )
+}
