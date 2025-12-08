@@ -60,3 +60,62 @@ crypto_xts <- get_crypto_data(
   ,from = backtesting_crypto_from
   ,to = backtesting_crypto_to
 )
+
+
+# 05 BACKTESTING SINGLE WINDOW --------------------------------------------
+
+strategy_fns <- list(
+  buy_hold = strat_buy_hold,
+  sma = strat_sma,
+  sma_cross = strat_sma_cross,
+  rsi = strat_rsi,
+  bb = strat_bb,
+  macd = strat_macd,
+  macd_vol = strat_macdv,
+  macd_vol_dynamic_strength = strat_macdv_dynamic_strength
+)
+
+# Generate all signals
+strategies <- future_map(strategy_fns, ~.x(crypto_xts))
+
+# Create combinations of strategy name + stop-loss options
+param_grid <- expand_grid(
+  name = names(strategies)
+  ,stop_loss = stop_losses
+)
+
+# Simulate trades and equity progression
+results_list <- future_pmap(param_grid, function(name, stop_loss) {
+  message(
+    "Running strategy: ", name, 
+    " | Stop loss %: ", stop_loss * 100, "%"
+  )
+  
+  res <- backtest_strategy(
+    signal_tbl = strategies[[name]]
+    ,fee_rate = 0.005
+    ,initial_equity = init_equity
+    ,stop_loss = stop_loss
+    ,min_trade_value = 10
+    ,force_close_final = TRUE      
+  )
+  
+  res$strategy_nm = name
+  
+  return(res)
+  
+})
+
+# Name each result meaningfully for clarity
+names(results_list) <- paste0(
+  param_grid$name, 
+  "_SL", param_grid$stop_loss * 100
+)
+
+# Summarise performance metrics
+summary_metrics <- get_performance_metrics(results_list, initial_equity = init_equity)
+
+# Show sorted results
+summary_metrics %>% 
+  arrange(desc(total_return)) %>% 
+  print(n = 40)
