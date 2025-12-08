@@ -47,6 +47,16 @@ backtesting_crypto_to <- Sys.Date() - days(2) # avoid potential NAs on later day
 stop_losses <- c(0, 0.02, 0.05, 0.1, 0.15)  # 0 = no SL
 stop_losses_pct <- paste0(stop_losses * 100, "%")
 
+
 # 03 LOAD FUNCTIONS -------------------------------------------------------
 
 source(file.path(crypto_dir, "R", "backtesting", "crypto_backtesting_functions.R"))
+
+
+# 04 GET TRADING DATA -----------------------------------------------------
+
+crypto_xts <- get_crypto_data(
+  symbol = backtesting_crypto_symbol
+  ,from = backtesting_crypto_from
+  ,to = backtesting_crypto_to
+)
