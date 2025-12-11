@@ -409,3 +409,12 @@ ggplot(
     ,vjust = -1.5
     ,size = 3
   ) +
+  
+  # Titles and axis labels  
+  labs(
+    title = "The Efficient Frontier: Return vs. Tail Risk"
+    ,subtitle = "Top 5 CAPS highlighted"
+    ,x = "Tail Risk (CVaR Drawdown)"
+    ,y = "Geometric Mean CAGR"
+  ) +
+  theme_minimal()
