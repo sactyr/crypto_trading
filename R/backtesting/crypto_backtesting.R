@@ -19,6 +19,7 @@ required_packages <- c(
   ,"PerformanceAnalytics"
   ,"lubridate"
   ,"furrr"
+  ,"ggplot2"
 )
 
 # Load the packages and suppress startup messages
@@ -26,8 +27,8 @@ suppressPackageStartupMessages({
   purrr::walk(required_packages, library, character.only = TRUE)
 })
 
-# Load all packages except furrr and lubridate for parallel worker function
-worker_packages <- required_packages[!required_packages %in% c("furrr", "lubridate")]
+# Load all packages except furrr, lubridate and ggplot2 for parallel worker function
+worker_packages <- required_packages[!required_packages %in% c("furrr", "lubridate", "ggplot2")]
 
 
 # 02 LOAD DEPENDABLES -----------------------------------------------------
@@ -36,7 +37,8 @@ crypto_dir <- Sys.getenv("CRYPTO_TRADING_FOLDER")
 
 # furrr options
 plan(multisession, workers = availableCores() - 1)
-options(future.globals.maxSize = 2048 * 1024^2)
+# options(future.globals.maxSize = 7168 * 1024^2)
+options(future.globals.maxSize = +Inf)
 options(future.packages = worker_packages) # Only load worker packages for workers
 
 init_equity <- 1000
@@ -124,7 +126,7 @@ summary_metrics %>%
 # 06 MONTE CARLO SIMULATION -----------------------------------------------
 
 ## Monte Carlo parameters -------------------------------------------------
-n_samples <- 300
+n_samples <- 1000
 min_window_length <- 250
 
 strength_threshold_grid <- seq(from = 20, to = 80, by = 10) # 50 is default for signals_macdv
@@ -155,6 +157,8 @@ window_metadata <- tibble(
 )
 
 ## Generate trade signals -------------------------------------------------
+# NOTE: The monte_carlo_signals object is still large, but it must be kept in 
+# memory to run the backtests in the next section.
 monte_carlo_signals <- future_map(
   .x = seq_along(sample_windows$sampled_windows)
   ,function(sample_index) {
@@ -219,79 +223,111 @@ monte_carlo_signals <- future_map(
 # Get all unique strategy names
 all_strategy_names <- names(monte_carlo_signals[[1]])
 
-## Run Monte Carlo backtesting --------------------------------------------
-monte_carlo_param_grid <- expand_grid(
-  window_id = names(sample_windows$sampled_windows)
-  ,strategy_name = all_strategy_names
-  ,stop_loss = stop_losses
-) %>% 
-  # Buy-hold doesn't use stop-losses (it never exits)
-  filter(!(strategy_name == "buy_hold" & stop_loss > 0)) %>%
-  # Create unified identifier
-  unite(
-    col = "backtest_id",
-    window_id, strategy_name, stop_loss,
-    sep = "_SL",
-    remove = FALSE
-  )
+## Run Monte Carlo backtesting in chunks by Stop Loss ----------------------
 
-message(
-  "Total backtests to run: ", nrow(monte_carlo_param_grid)
-  ," (", length(sample_windows$sampled_windows), " windows * "
-  ,length(all_strategy_names), " strategies * "
-  ,"~", length(stop_losses), " stop-losses)"
-)
+### Setup ------------------------------------------------------------------
+all_monte_carlo_summaries <- list()
 
-monte_carlo_results <- future_pmap(
-  .l = monte_carlo_param_grid
-  ,function(window_id, strategy_name, stop_loss, backtest_id) {
-    
-    message("Running: ", backtest_id)
-    
-    res <- backtest_strategy(
-      signal_tbl = monte_carlo_signals[[window_id]][[strategy_name]]
-      ,fee_rate = 0.005
-      ,initial_equity = init_equity
-      ,stop_loss = stop_loss
-      ,min_trade_value = 10
-      ,force_close_final = TRUE
-    )
-    
-    res$strategy_nm <- strategy_name
-    res$window_id <- window_id
-    res$window_length <- sample_windows$window_lengths[as.integer(str_extract(window_id, "\\d+"))]
-    res$window_start_date <- sample_windows$start_dates[as.integer(str_extract(window_id, "\\d+"))]
-    res$window_end_date <- sample_windows$end_dates[as.integer(str_extract(window_id, "\\d+"))]
-    
-    return(res)
-  }
-  ,.progress = TRUE
-  ,.options = furrr_options(seed = TRUE)
-) %>% 
-  set_names(nm = monte_carlo_param_grid$backtest_id)
+message("Total samples (windows): ", length(sample_windows$sampled_windows))
 
-
-## Summarise performance metrics -----------------------------------------
-monte_carlo_summary <- get_performance_metrics(monte_carlo_results, initial_equity = init_equity)
-
-# Add window metadata for analysis
-monte_carlo_summary <- monte_carlo_summary %>%
-  left_join(
-    monte_carlo_param_grid %>% 
-      select(backtest_id, window_id)
-    ,by = c("strategy" = "backtest_id")
+### Loop over stop losses --------------------------------------------------
+for (sl in stop_losses) {
+  
+  message("Starting Monte Carlo for Stop Loss: ", sl * 100, "%")
+  
+  #### In loop setup -------------------------------------------------------
+  mc_param_grid_sl <- expand_grid(
+    window_id = names(sample_windows$sampled_windows)
+    ,strategy_name = all_strategy_names
+    ,stop_loss = sl
   ) %>% 
-  left_join(
-    window_metadata
-    ,by = "window_id"
-  ) 
+    
+    # Buy-hold only runs when stop_loss is 0 (or technically any SL>0 when SL=0 is removed)
+    filter(!(strategy_name == "buy_hold" & sl > 0)) %>%
+    
+    # Create unified identifier
+    unite(
+      col = "backtest_id",
+      window_id, strategy_name, stop_loss,
+      sep = "_SL",
+      remove = FALSE
+    )
+  
+  message("Total backtests to run in this chunk: ", nrow(mc_param_grid_sl))
+  
+  ### Backtesting ---------------------------------------------------------
+  monte_carlo_results_sl <- future_pmap(
+    .l = mc_param_grid_sl
+    ,function(window_id, strategy_name, stop_loss, backtest_id) {
+      
+      message("Running: ", backtest_id)
+      
+      res <- backtest_strategy(
+        signal_tbl = monte_carlo_signals[[window_id]][[strategy_name]]
+        ,fee_rate = 0.005
+        ,initial_equity = init_equity
+        ,stop_loss = stop_loss
+        ,min_trade_value = 10
+        ,force_close_final = TRUE
+      )
+      
+      # Add metadata
+      window_index <- as.integer(str_extract(window_id, "\\d+"))
+      
+      res$strategy_nm <- strategy_name
+      res$window_id <- window_id
+      res$window_length <- sample_windows$window_lengths[window_index]
+      res$window_start_date <- sample_windows$start_dates[window_index]
+      res$window_end_date <- sample_windows$end_dates[window_index]
+      
+      return(res)
+    }
+    ,.progress = TRUE
+    ,.options = furrr_options(seed = TRUE, globals = c("init_equity", "backtest_strategy", "monte_carlo_signals", "sample_windows")) 
+  ) %>% 
+    set_names(nm = mc_param_grid_sl$backtest_id)
+  
+  ### Summarise performance metrics ---------------------------------------
+  monte_carlo_summary_sl <- get_performance_metrics(
+    monte_carlo_results_sl
+    ,initial_equity = init_equity
+  )
+  
+  ### Add window metadata -------------------------------------------------
+  monte_carlo_summary_sl <- monte_carlo_summary_sl %>%
+    left_join(
+      mc_param_grid_sl %>% 
+        select(backtest_id, window_id)
+      ,by = c("strategy" = "backtest_id")
+    ) %>% 
+    left_join(
+      window_metadata
+      ,by = "window_id"
+    ) 
+  
+  ### Store results ------------------------------------------------------
+  all_monte_carlo_summaries[[paste0("SL", sl * 100)]] <- monte_carlo_summary_sl
+  
+  ### Memory management --------------------------------------------------
+  rm(monte_carlo_results_sl)
+  gc(verbose = FALSE) 
+  
+}
 
-saveRDS(
-  object = monte_carlo_summary
-  ,file = file.path(crypto_dir, "outputs", "backtesting", "monte_carlo_summary.rds")
-)
 
 ## Clean up --------------------------------------------------------------
 
-# Explicitly close multisession workers by switching plan
-plan(sequential)
+plan(sequential) # Explicitly close multisession workers by switching plan
+
+
+## Combine all results ---------------------------------------------------
+
+monte_carlo_summary <- bind_rows(all_monte_carlo_summaries)
+
+# Save the final combined summary
+saveRDS(
+  object = monte_carlo_summary
+  ,file = file.path(crypto_dir, "outputs", "backtesting", paste0(Sys.Date(), "_monte_carlo_summary.rds"))
+)
+
+
