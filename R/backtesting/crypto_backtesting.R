@@ -380,3 +380,32 @@ ranked_summary <- agg_summary %>%
     ,CAPS = robust_calmar * prob_score
   ) %>%
   arrange(desc(CAPS))
+
+
+## Visualisation ----------------------------------------------------------
+
+### The Efficient Frontier ------------------------------------------------
+ggplot(
+  data = ranked_summary
+  ,mapping =  aes(x = cvar_drawdown, y = geo_mean_CAGR)
+) +
+  
+  # Plot all points in grey
+  geom_point(
+    mapping = aes(size = CAPS)
+    ,color = "grey"
+    ,alpha = 0.5
+  ) +
+  
+  # Highlight the Top 5 by CAPS Score
+  geom_point(
+    data = head(final_ranking, 5)
+    ,mapping =  aes(color = strategy_type, size = CAPS)
+    ,alpha = 0.5
+  ) +
+  geom_text(
+    data = head(final_ranking, 5)
+    ,mapping = aes(label = paste(strategy_type, stop_loss, sep = "_"))
+    ,vjust = -1.5
+    ,size = 3
+  ) +
