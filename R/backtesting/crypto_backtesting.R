@@ -331,3 +331,52 @@ saveRDS(
 )
 
 
+## Aggregate results -----------------------------------------------------
+
+agg_summary <- monte_carlo_summary %>%
+  # Treat 0 trades as 0 return for fair comparison
+  mutate(CAGR = ifelse(num_trades == 0, 0, CAGR)) %>%
+  group_by(strategy_type, stop_loss) %>%
+  summarise(
+    # METRIC 1: Geometric Mean of Return / Expected log-returns
+    # Formula: exp(mean(ln(1 + R))) - 1
+    geo_mean_CAGR = exp(mean(log(1 + pmax(CAGR, -0.99)), na.rm = TRUE)) - 1
+    
+    # METRIC 2: Stability (Percent of windows with Positive Return)
+    ,win_rate_windows = mean(total_return > 0, na.rm = TRUE)
+    
+    # METRIC 3: Risk-Adjusted Stability (Mean Sharpe is noisy, Median is robust)
+    ,median_Sharpe = median(sharpe_ratio, na.rm = TRUE)
+    
+    # METRIC 4: Tail Risk (The average of the worst 5% of outcomes)
+    ,cvar_drawdown = mean(sort(max_drawdown, decreasing = TRUE)[1:ceiling(n() * 0.05)], na.rm = TRUE)
+    
+    # Context
+    ,n_samples = n()
+    ,.groups = "drop"
+  ) %>%
+  arrange(desc(geo_mean_CAGR))
+
+ranked_summary <- agg_summary %>%
+  mutate(
+    # Robust Calmar: How much return do I get for risking a crash? (Return per 
+    # Unit of Extreme Risk)
+    robust_calmar = geo_mean_CAGR / cvar_drawdown
+    
+    # Probability Score: How reliable (quality) and consistent is the performance?
+    # - win_rate_windows indicates reliability - percentage of Monte Carlo windows
+    # where strategy achieved a positive total return, across various market
+    # conditions (bull, bear, choppy, long, short)
+    # - median_Sharpe indicates performance quality - quality of risk-adjusted
+    # returns. Crypto is highly skewed, so using median Sharpe is more robust
+    # than mean Sharpe.
+    ,prob_score = win_rate_windows * median_Sharpe
+    
+    # CAPS (Calmar-adjusted Probability Score) - final composite metric that ranks
+    # strategies by balancing return, consistency, and worst-case risk.
+    # - penalises the high-risk, high-return strategies (like Buy & Hold)
+    # - rewards strategies that effectively manage downside risk and maintain 
+    # consistency.
+    ,CAPS = robust_calmar * prob_score
+  ) %>%
+  arrange(desc(CAPS))
