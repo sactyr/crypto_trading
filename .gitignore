@@ -1,0 +1,11 @@
+.Rproj.user
+*.Rproj
+.Rhistory
+.RData
+.Ruserdata
+.rds
+*.log
+.exe
+bws/
+outputs/
+historical trade data/
