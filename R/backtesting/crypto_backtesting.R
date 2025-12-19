@@ -399,12 +399,12 @@ ggplot(
   
   # Highlight the Top 5 by CAPS Score
   geom_point(
-    data = head(final_ranking, 5)
+    data = head(ranked_summary, 5)
     ,mapping =  aes(color = strategy_type, size = CAPS)
     ,alpha = 0.5
   ) +
   geom_text(
-    data = head(final_ranking, 5)
+    data = head(ranked_summary, 5)
     ,mapping = aes(label = paste(strategy_type, stop_loss, sep = "_"))
     ,vjust = -1.5
     ,size = 3
