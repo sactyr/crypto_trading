@@ -1,11 +1,22 @@
+# R
 .Rproj.user
 *.Rproj
 .Rhistory
 .RData
 .Ruserdata
-.rds
-*.log
-.exe
-bws/
+
+# Secrets & Config
+.Renviron
+
+# Data & Outputs
+*.rds
 outputs/
 historical trade data/
+
+# Logs
+*.log
+logs/
+
+# Executables
+*.exe
+bws/
