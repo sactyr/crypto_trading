@@ -6,4 +6,6 @@ These algorithms have been tested via a Monte Carlo simulation, in which 1000
 time window samples are backtested using combination of trading algorithms,
 stop-losses and various other parameters.
 
-Hourly prices will be automatically downloaded and merged to a local dataset.
+Hourly prices will be automatically downloaded and merged to ~~a local dataset~~
+an Azure Blob Storage container, with the entire pipeline running on Azure 
+Container Instances.
