@@ -57,8 +57,8 @@ if (!dir.exists(log_dir)) {
 # Define the log file
 log_file <- file.path(log_dir, "get_price_history_log.log")
 
-# Set the appender
-log_appender(appender_file(log_file))
+# Set the appender (append if file exists, create if not)
+log_appender(appender_file(log_file, append = file.exists(log_file)))
 
 log_info("--- GETTING HISTORICAL PRICES START ---")
 
