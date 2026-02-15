@@ -12,11 +12,11 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy R scripts folder
-COPY R/ /app/R/
-
 # Install R packages
 RUN R -e "install.packages(c('vvbitwarden', 'purrr', 'httr2', 'jsonlite', 'dplyr', 'tidyr', 'readr', 'stringr', 'lubridate', 'logger', 'openssl', 'AzureStor', 'AzureAuth', 'xts', 'quantmod'), repos='https://cran.rstudio.com/')"
+
+# Copy R scripts folder
+COPY R/ /app/R/
 
 # Set environment variables for Azure (will be overridden at runtime)
 ENV CRYPTO_TRADING_FOLDER=/app
