@@ -180,8 +180,6 @@ if (is_azure) {
   # Flush and sync the successful log to Azure
   try({
     
-    log_appender(appender_console)
-    
     upload_log_file_azure(
       log_file_path = log_file,
       blob_name = paste0("logs/crypto_get_price_history/", Sys.Date(), "/get_price_history_log.log"),
