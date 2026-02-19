@@ -57,34 +57,51 @@ if (!dir.exists(log_dir)) {
 # Define the log file
 log_file <- file.path(log_dir, "get_price_history_log.log")
 
-# Set the appender (append if file exists, create if not)
-log_appender(appender_file(log_file, append = file.exists(log_file)))
+# Azure authentication (need this BEFORE downloading log)
+tryCatch({
+  
+  azure_container <- get_azure_container(is_azure_cloud = is_azure)
+  
+  # If running in Azure, try to download existing log first (before setting up logger)
+  if (is_azure) {
+    try({
+      blob_log_name <- paste0("logs/crypto_get_price_history/", Sys.Date(), "/get_price_history_log.log")
+      
+      storage_download(
+        container = azure_container
+        ,src = blob_log_name
+        ,dest = log_file
+        ,overwrite = TRUE
+      )
+    }, silent = TRUE)  # Fail silently if log doesn't exist yet (first run of day)
+  }
+  
+}, error = function(e) {
+  
+  azure_auth_error_msg <- paste("CRITICAL: Azure Authentication FAILED -", e$message)
+  message(azure_auth_error_msg)
+  stop()
+  
+})
+
+# Initialize the file only if it doesn't exist (first run of the day)
+if (!file.exists(log_file)) {
+  file.create(log_file)
+}
+
+# Set the appender (always append)
+log_appender(appender_file(log_file, append = TRUE))
+
+# Force layout configuration (ensures proper formatting on append)
+log_layout(layout_glue_generator(
+  format = '{level} [{format(time, "%Y-%m-%d %H:%M:%S", tz = "Australia/Sydney")}] {msg}'
+))
 
 log_info("--- GETTING HISTORICAL PRICES START ---")
 
 log_info("Running on ", trade_env)
 
-# Azure authentication
-tryCatch({
-  
-  azure_container <- get_azure_container(is_azure_cloud = is_azure)
-  
-  log_success("Azure Authentication: SUCCESS")
-  
-}, error = function(e) {
-  
-  azure_auth_error_msg <- paste("CRITICAL: Azure Authentication FAILED -", e$message)
-  
-  # Log this error to file
-  log_error(azure_auth_error_msg)
-  
-  # Also print to Console so it's guaranteed to be in Azure Logs
-  message(azure_auth_error_msg)
-  
-  stop()
-  
-})
-
+log_success("Azure Authentication: SUCCESS")
 
 # 03 GET PRICE HISTORY ----------------------------------------------------
 
@@ -177,14 +194,12 @@ log_info("--- GETTING HISTORICAL PRICES END ---")
 
 # The following ensures logs in Azure are written to Blob Storage
 if (is_azure) {
-  # Flush and sync the successful log to Azure
-  try({
-    
-    upload_log_file_azure(
-      log_file_path = log_file,
-      blob_name = paste0("logs/crypto_get_price_history/", Sys.Date(), "/get_price_history_log.log"),
-      azure_container = azure_container
-    )
-  }, silent = TRUE)
+  
+  # Upload log file (show errors if any)
+  upload_log_file_azure(
+    log_file_path = log_file
+    ,blob_name = paste0("logs/crypto_get_price_history/", Sys.Date(), "/get_price_history_log.log")
+    ,azure_container = azure_container
+  )
   
 }
