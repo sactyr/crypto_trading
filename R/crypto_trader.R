@@ -292,7 +292,7 @@ if (decision == "BUY") {
 
 if (decision == "BUY") {
   bot_state$in_position             <- TRUE
-  bot_state$purchase_price          <- latest_price
+  bot_state$purchase_price          <- latest_price # purchase_price is price per BTC at time of purchase (not total AUD spent)
   bot_state$last_trade_time         <- Sys.time()
   bot_state$current_cash_holdings   <- 0
   bot_state$current_crypto_holdings <- actual_aud / latest_price  # approx BTC acquired
