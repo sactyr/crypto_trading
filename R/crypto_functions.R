@@ -693,7 +693,7 @@ get_ir_accounts <- function(req_type = "GetAccounts", key, secret) {
 #'   ,secret = ir_keys$secret_key
 #' )
 #' }
-place_ir_order <- function(type, amount, key, secret) {
+place_ir_order <- function(type, amount, key, secret, perform_fn = httr2::req_perform) {
   
   # Validate order type
   if (!type %in% c("MarketBuy", "MarketSell")) {
@@ -719,15 +719,24 @@ place_ir_order <- function(type, amount, key, secret) {
       ,extra_params = extra_params
     ) %>%
     req_retry(max_tries = 3) %>%
-    req_perform()
+    perform_fn()
   
   if (resp_status(resp) != 200) {
+    
+    body_msg <- tryCatch(
+      resp_body_string(resp)
+      ,error = function(e) "(unable to parse response body)"
+    )
+    
     err_msg <- paste(
       "Order placement failed. Status:", resp_status(resp)
-      ,"-", resp_body_string(resp)
+      ,"-", body_msg
     )
-    log_error(err_msg)
+    
+    log_error(skip_formatter(err_msg))
+    
     stop(err_msg)
+    
   }
   
   order_result <- resp_body_json(resp)
