@@ -19,6 +19,38 @@ convert_utc_aest <- function(utc_dttm) {
 }
 
 
+#' Get Standard Log Layout Formatter
+#' 
+#' @description
+#' Returns a logger layout formatter that produces consistently formatted log
+#' messages with aligned timestamps, log levels, and messages. Used across all
+#' scripts to ensure uniform logging output.
+#' 
+#' @return A layout_glue_generator object that formats log messages as:
+#' `[YYYY-MM-DD HH:MM:SS] | LEVEL   | message`
+#' 
+#' @details
+#' The formatter:
+#' - Left-pads log levels to 7 characters for alignment
+#' - Converts levels to uppercase (INFO, SUCCESS, WARN, ERROR)
+#' - Uses AEDT/AEST timezone from system settings
+#' 
+#' @examples
+#' \dontrun{
+#' # Apply to logger
+#' log_layout(get_log_layout())
+#' 
+#' # Output example:
+#' # [2026-02-24 13:06:06] | INFO    | Starting process
+#' # [2026-02-24 13:06:07] | SUCCESS | Process complete
+#' }
+get_log_layout <- function() {
+  layout_glue_generator(
+    format = '[{format(time, "%Y-%m-%d %H:%M:%S")}] | {toupper(sprintf("%-7s", level))} | {msg}'
+  )
+}
+
+
 #' Get Hourly Historical Price Summary from Independent Reserve
 #'
 #' @description

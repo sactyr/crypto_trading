@@ -91,11 +91,7 @@ if (!file.exists(log_file)) {
 
 # Set the appender (always append)
 log_appender(appender_file(log_file, append = TRUE))
-
-# Force layout configuration (ensures proper formatting on append)
-log_layout(layout_glue_generator(
-  format = '{level} [{format(time, "%Y-%m-%d %H:%M:%S", tz = "Australia/Sydney")}] {msg}'
-))
+log_layout(get_log_layout())
 
 log_info("--- GETTING HISTORICAL PRICES START ---")
 

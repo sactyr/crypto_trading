@@ -29,7 +29,8 @@ if (!dir.exists(log_dir)) {
 log_file <- file.path(log_dir, "crypto_trader.log")
 
 # Set the appender
-log_appender(appender_file(log_file))
+log_appender(appender_file(log_file, append = TRUE))
+log_layout(get_log_layout())
 
 log_info("--- TRADER SESSION START ---")
 
