@@ -140,8 +140,8 @@ Technical deep-dives documenting this project:
 2. [**Part 2: Automating Crypto Price Collection with R and Azure**](https://sactyr.github.io/posts/2026-02-11-automating-crypto-price-collection-azure/)  
    Azure deployment, Managed Identity setup, Docker optimization, logging architecture
 
-3. **Part 3: Trading Execution & Lessons Learned** *(planned)*  
-   Risk management, order execution, why market conditions matter
+3. [**Part 3: From Signals to Live Orders - Completing the Loop**](https://sactyr.github.io/posts/2026-04-10-building-an-automated-crypto-trader-part-3/)  
+   Automated trading, algo-trading, generating signals, Independent Reserve
 
 ## 🎓 Key Learnings
 
